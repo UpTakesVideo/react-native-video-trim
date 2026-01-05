@@ -40,8 +40,8 @@ class VideoTrimmerViewController: UIViewController {
             }
         }
     }
-    private var maximumDuration: Int?
-    private var minimumDuration: Int?
+    private var maximumDuration: Double?
+    private var minimumDuration: Double?
     private var cancelButtonText = "Cancel"
     private var saveButtonText = "Save"
     var cancelBtnClicked: (() -> Void)?
@@ -332,15 +332,16 @@ class VideoTrimmerViewController: UIViewController {
         trimmer.zoomOnWaitingDuration = zoomOnWaitingDuration
         
         if let maxDuration = maximumDuration {
-            trimmer.maximumDuration = CMTime(seconds: max(1, Double(maxDuration)), preferredTimescale: 600)
-            if trimmer.maximumDuration > asset!.duration {
-                trimmer.maximumDuration = asset!.duration
-            }
-            trimmer.selectedRange = CMTimeRange(start: .zero, end: trimmer.maximumDuration)
+            let initialMaxDuration = CMTime(seconds: max(1.0, maxDuration), preferredTimescale: 600)
+            let clampedMaxDuration = initialMaxDuration > asset!.duration ? asset!.duration : initialMaxDuration
+            // Set initial selected range based on maxDuration
+            trimmer.selectedRange = CMTimeRange(start: .zero, end: clampedMaxDuration)
+            // Remove maximumDuration constraint so user can trim past the initial maxDuration
+            trimmer.maximumDuration = .positiveInfinity
         }
         
         if let minDuration = minimumDuration {
-            trimmer.minimumDuration = CMTime(seconds: max(1, Double(minDuration)), preferredTimescale: 600)
+            trimmer.minimumDuration = CMTime(seconds: minDuration, preferredTimescale: 600)
         }
         
         trimmer.addTarget(self, action: #selector(didBeginScrubbing(_:)), for: VideoTrimmer.didBeginScrubbing)
@@ -399,9 +400,19 @@ class VideoTrimmerViewController: UIViewController {
     }
     
     @objc private func playerDidFinishPlaying(note: NSNotification) {
-        // Directly set the play icon
-        // the reason in at this time player.timeControlStatus == .playing still returns true
-        playBtn.setImage(self.playIcon, for: .normal)
+        // Reset to start of selected range when playback finishes
+        player.pause()
+        player.rate = 0
+        trimmer.progress = trimmer.selectedRange.start
+        
+        // Force immediate seek to reset player state
+        let startTime = trimmer.selectedRange.start
+        player.currentItem?.seek(to: startTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            guard let self = self else { return }
+            self.trimmer.progress = startTime
+            self.updateLabels()
+            self.setPlayBtnIcon()
+        }
     }
     
     private func setupTimeObserver() {
@@ -467,11 +478,11 @@ class VideoTrimmerViewController: UIViewController {
     }
     
   public func configure(config: NSDictionary) {
-    if let maxDuration = config["maxDuration"] as? Int, maxDuration > 0 {
+    if let maxDuration = config["maxDuration"] as? Double, maxDuration > 0 {
       maximumDuration = maxDuration
     }
     
-    if let minDuration = config["minDuration"] as? Int, minDuration > 0 {
+    if let minDuration = config["minDuration"] as? Double, minDuration > 0 {
       minimumDuration = minDuration
     }
     
